@@ -1,0 +1,34 @@
+# Files requested to remain local
+/docs/
+/START_HERE.md
+/steps.txt
+/README.md
+/readme.md
+/scripts/start.ps1
+/scripts/stop.ps1
+
+# Real environment files
+.env
+.env.*
+!.env.example
+
+# Python generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Logs and generated runtime data
+*.log
+logs/
+output/
+data/
+checkpoints/
+savepoints/
+
+# IDE and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

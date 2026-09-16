@@ -1,0 +1,71 @@
+name: CDC Pipeline CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+# Allow me to manually run this workflow from GitHub's Actions tab.
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+
+      - name: Validate Python scripts
+        run: |
+          python -m compileall scripts/
+
+      - name: Run pytest
+        run: |
+          pythom -m pytest -v
+
+
+      - name: Validate Debezium connector JSON
+        run: |
+          python -m json.tool debezium/mysql-shop-connector.json > /dev/null
+
+# json.tool is a utility included with Python itself.
+#It reads JSON and tries to parse it.
+#For example valid JSON:
+#{
+#"name": "mysql-shop-connector",
+#"config": {
+#    "connector.class": "io.debezium.connector.mysql.MySqlConnector"
+#  }
+#}
+#passes.
+
+      - name: Validate Docker Compose
+        run: |
+          docker compose config -q
+
+
+      - name: Validate Flink SQL structure
+        run: |
+          grep -q "CREATE TABLE orders_cdc" flink/sql/cdc_pipeline.sql
+          grep -q "'value.format' = 'debezium-json'" flink/sql/cdc_pipeline.sql
+          grep -q "'connector' = 'jdbc'" flink/sql/cdc_pipeline.sql
+          grep -q "EXECUTE STATEMENT SET" flink/sql/cdc_pipeline.sql
+
+
+      - name: Build custom Flink images
+        run: |
+          docker compose build flink-jobmanager flink-taskmanager flink-sql
