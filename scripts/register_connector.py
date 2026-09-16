@@ -74,25 +74,34 @@ def main() -> int:
     status_url = f"{CONNECT_URL}/connectors/{name}/status"
     for attempt in range(1, 31):
         status_response = session.get(status_url, timeout=10)
+
+        # Registration may succeed before the status endpoint is ready.
+        if status_response.status_code == 404:
+            print(f"Connector status not ready yet ({attempt}/30)")
+            time.sleep(2)
+            continue
+
         status_response.raise_for_status()
+
         status = status_response.json()
         connector_state = status.get("connector", {}).get("state")
         task_states = [task.get("state") for task in status.get("tasks", [])]
+
         print(
             f"Connector state={connector_state}, task states={task_states} "
             f"({attempt}/30)"
         )
+
         if connector_state == "RUNNING" and task_states and all(
             state == "RUNNING" for state in task_states
         ):
             return 0
+
         if connector_state == "FAILED" or "FAILED" in task_states:
             print(json.dumps(status, indent=2), file=sys.stderr)
             return 1
-        time.sleep(2)
 
-    print("Connector was registered but did not reach RUNNING state.", file=sys.stderr)
-    return 1
+        time.sleep(2)
 
 
 if __name__ == "__main__":
