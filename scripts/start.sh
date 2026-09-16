@@ -26,6 +26,10 @@ docker compose up -d \
     flink-jobmanager \
     flink-taskmanager
 
+# Fix Flink checkpoint/savepoint volume ownership
+docker exec -u 0 cdc-flink-jobmanager \
+    sh -c "chown -R flink:flink /checkpoints /savepoints"
+
 # Create Python virtual environment if needed
 if [ ! -d ".venv" ]; then
     python3 -m venv .venv
