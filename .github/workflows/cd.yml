@@ -1,0 +1,117 @@
+name: CDC Pipeline CD
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+#only 1 deployment job can run at a time, and if a new deployment is triggered while one is in progress, the new one will be queued and wait for the current one to finish. This prevents multiple deployments from running simultaneously, which could cause conflicts or issues with the deployment process.
+concurrency:
+  group: cdc-ec2-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: us-east-1
+      INSTANCE_ID: i-00f09a4c0586b82ac
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::746780967442:role/cdc-github-actions-deploy-role
+          aws-region: us-east-1
+
+      - name: Send deployment command to EC2
+        id: deploy
+        shell: bash
+#cat > some incoming file <<'EOF' is a way to create a file with the content that follows until EOF is reached. The single quotes around EOF ensure that the content is treated literally, without variable expansion or command substitution.
+#When GitHub tells Systems Manager:
+#Run this command on EC2.
+#AWS doesn't necessarily sit there and wait until Docker/Flink finishes.
+#Instead AWS responds roughly:
+#Okay, I accepted your command.#Its tracking number is:
+#abc-123
+#That tracking number is the:
+#COMMAND_ID
+        run: |
+          cat > /tmp/ssm-parameters.json <<'EOF'
+          {
+            "commands": [
+              "sudo -u ubuntu -H bash -lc 'cd /home/ubuntu/Real-Time-CDC-Pipeline-with-Debezium-Kafka-Apache-Flink && git fetch origin main && git reset --hard origin/main && bash scripts/start.sh'"
+            ]
+          }
+          EOF
+        
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters file:///tmp/ssm-parameters.json \
+            --region "$AWS_REGION" \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "command_id=$COMMAND_ID" >> "$GITHUB_OUTPUT"
+          echo "SSM Command ID: $COMMAND_ID"
+
+      - name: Wait for deployment to finish
+        shell: bash
+        run: |
+          COMMAND_ID="${{ steps.deploy.outputs.command_id }}"
+
+          for attempt in {1..90}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --region "$AWS_REGION" \
+              --query "Status" \
+              --output text 2>/dev/null || echo "Pending")
+
+            echo "Deployment status: $STATUS"
+
+            if [ "$STATUS" = "Success" ]; then
+              echo "Deployment completed successfully."
+
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --region "$AWS_REGION" \
+                --query "StandardOutputContent" \
+                --output text
+
+              exit 0
+            fi
+
+            if [[ "$STATUS" == "Failed" || \
+                  "$STATUS" == "Cancelled" || \
+                  "$STATUS" == "TimedOut" ]]; then
+
+              echo "Deployment failed."
+
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --region "$AWS_REGION" \
+                --query "{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}" \
+                --output json
+
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          echo "Deployment did not finish within the expected time."
+          exit 1
