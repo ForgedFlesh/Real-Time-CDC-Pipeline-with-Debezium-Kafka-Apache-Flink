@@ -1,10 +1,6 @@
 name: CDC Pipeline CD
 
 on:
-  push:
-    branches:
-      - main
-
   workflow_dispatch:
 
 permissions:
@@ -27,7 +23,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-
+#this is where we receive temporary credentials from AWS using OIDC.
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
